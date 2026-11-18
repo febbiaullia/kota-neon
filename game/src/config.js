@@ -95,7 +95,7 @@ export const WANTED = {
   decayClearRadius: 420,
 };
 
-/** The five-mission story chain. Steps are checked by the world, in order. */
+/** The six-mission story chain. Steps are checked by the world, in order. */
 export const MISSIONS = [
   {
     id: 'paket-pertama',
@@ -146,6 +146,17 @@ export const MISSIONS = [
     steps: [
       { type: 'goto', x: PLACES.garage.x, y: PLACES.garage.y, radius: 70, label: 'Ambil paket terakhir di bengkel' },
       { type: 'timed', x: PLACES.tower.x, y: PLACES.tower.y, radius: 80, time: 90, label: 'Antar ke Menara Jam (90 dtk)' },
+    ],
+  },
+  {
+    id: 'tamu-terakhir',
+    title: 'Tamu Terakhir',
+    briefing: 'Bu Sari: "Kota ini milikmu sekarang, Nara. Tapi satu tamu terakhir menunggu di Parkir Pantai — antar dia ke Kafe Senja sebelum dia pergi."',
+    reward: 500,
+    wanted: 2,
+    steps: [
+      { type: 'goto', x: PLACES.beachParking.x, y: PLACES.beachParking.y, radius: 70, label: 'Jemput tamu di Parkir Pantai' },
+      { type: 'timed', x: PLACES.cafe.x, y: PLACES.cafe.y, radius: 80, time: 75, label: 'Antar tamu ke Kafe Senja (75 dtk)' },
     ],
   },
 ];
