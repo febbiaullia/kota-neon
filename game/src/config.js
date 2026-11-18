@@ -29,6 +29,8 @@ export const PLACES = {
   safehouse: { x: 3000, y: 2050, name: 'Rumah Aman' },
   pier: { x: 1800, y: 2450, name: 'Dermaga Senja' },
   beachParking: { x: 2100, y: 2350, name: 'Parkir Pantai' },
+  market: { x: 2700, y: 550, name: 'Pasar Neon' },
+  terminal: { x: 300, y: 1800, name: 'Terminal Kota' },
 };
 
 /** The player on foot. */
@@ -57,6 +59,66 @@ export const CAR = {
   grip: 3.2,
   hp: 100,
   enterRadius: 78,
+};
+
+/** Nitro: hold Shift while driving for a speed boost. The meter (0..1) drains while
+ * active, refills while idle, and locks out briefly when it runs dry. */
+export const NITRO = {
+  boost: 1.6,
+  accelBonus: 500,
+  drain: 0.45,
+  regen: 0.18,
+  emptyCooldown: 2.0,
+};
+
+/** Dash: on foot, press F to burst in the direction you are moving (or facing).
+ * A short burst with a cooldown, so it is an escape tool, not a sprint. */
+export const DASH = {
+  speed: 900,
+  duration: 0.18,
+  cooldown: 2.0,
+};
+
+/** The day cycle: timeOfDay runs 0..1 over dayLength seconds. Dusk fades in from
+ * duskStart, full night from nightStart, and dawn fades the night out by dawnEnd.
+ * Street lamps and headlights only shine once the night factor rises. */
+export const DAY = {
+  dayLength: 180,
+  duskStart: 0.55,
+  nightStart: 0.75,
+  dawnEnd: 0.08,
+};
+
+/** The motorcycle: a second drivable vehicle. Quicker off the line, a higher top
+ * speed and sharper steering than any car, but fragile — one hard crash can wreck it,
+ * and it carries no more protection than its rider. */
+export const BIKE = {
+  length: 44,
+  width: 16,
+  accel: 560,
+  brake: 800,
+  reverseAccel: 200,
+  maxSpeed: 640,
+  maxReverse: 120,
+  steer: 3.4,
+  hp: 60,
+  enterRadius: 60,
+  trafficChance: 0.2,
+  parkedChance: 0.3,
+};
+
+/** The taxi side job: drive a car near a waiting passenger to pick them up, then
+ * follow the fare meter to their destination. The meter ticks with distance driven;
+ * quitting the car mid-fare loses the passenger and the fare. A base fare of $25
+ * makes a short hop worth the detour, and a long cross-city run pays like a mission. */
+export const TAXI = {
+  baseFare: 25,
+  farePerMetre: 0.15,
+  waitRadius: 90,
+  dropoffRadius: 80,
+  cooldownAfterFare: 20,
+  cooldownAfterQuit: 15,
+  firstHailDelay: 8,
 };
 
 /** Traffic cars that drive the roads on their own. */
@@ -95,7 +157,7 @@ export const WANTED = {
   decayClearRadius: 420,
 };
 
-/** The six-mission story chain. Steps are checked by the world, in order. */
+/** The ten-mission story chain. Steps are checked by the world, in order. */
 export const MISSIONS = [
   {
     id: 'paket-pertama',
@@ -159,6 +221,49 @@ export const MISSIONS = [
       { type: 'timed', x: PLACES.cafe.x, y: PLACES.cafe.y, radius: 80, time: 75, label: 'Antar tamu ke Kafe Senja (75 dtk)' },
     ],
   },
+  {
+    id: 'pasar-pagi',
+    title: 'Pasar Pagi',
+    briefing: 'Bu Sari: "Ikan segar dari Pasar Neon harus sampai di Kafe Senja sebelum sarapan. Jangan sampai basi!"',
+    reward: 350,
+    steps: [
+      { type: 'goto', x: PLACES.market.x, y: PLACES.market.y, radius: 70, label: 'Ambil ikan di Pasar Neon' },
+      { type: 'goto', x: PLACES.cafe.x, y: PLACES.cafe.y, radius: 70, label: 'Antar ikan ke Kafe Senja' },
+    ],
+  },
+  {
+    id: 'terminal-terakhir',
+    title: 'Terminal Terakhir',
+    briefing: 'Bu Sari: "Bus terakhir berangkat dari Terminal Kota. Paket ini harus naik bus itu — 90 detik, dan polisi sudah mengendus."',
+    reward: 450,
+    wanted: 2,
+    steps: [
+      { type: 'goto', x: PLACES.garage.x, y: PLACES.garage.y, radius: 70, label: 'Ambil paket di bengkel' },
+      { type: 'timed', x: PLACES.terminal.x, y: PLACES.terminal.y, radius: 80, time: 90, label: 'Antar ke Terminal Kota (90 dtk)' },
+    ],
+  },
+  {
+    id: 'kurir-senja',
+    title: 'Kurir Senja',
+    briefing: 'Bu Sari: "Ada motor merah pesanan di Terminal Kota — motor, bukan mobil. Bawa ke bengkel sebelum senja. Hati-hati, motor itu lebih cepat dari kelihatannya."',
+    reward: 550,
+    vehicle: 'bike',
+    steps: [
+      { type: 'steal', x: PLACES.terminal.x, y: PLACES.terminal.y, radius: 90, label: 'Ambil motor merah di Terminal Kota' },
+      { type: 'deliverCar', x: PLACES.garage.x, y: PLACES.garage.y, radius: 110, label: 'Bawa motornya ke Bengkel Sari' },
+    ],
+  },
+  {
+    id: 'legenda-neon',
+    title: 'Legenda Neon',
+    briefing: 'Bu Sari: "Satu paket terakhir, Nara. Dari bengkel ke Menara Jam, 75 detik, dengan seluruh kota mengejarmu. Kalau ini berhasil, namamu jadi legenda."',
+    reward: 800,
+    wanted: 4,
+    steps: [
+      { type: 'goto', x: PLACES.garage.x, y: PLACES.garage.y, radius: 70, label: 'Ambil paket legenda di bengkel' },
+      { type: 'timed', x: PLACES.tower.x, y: PLACES.tower.y, radius: 80, time: 75, label: 'Antar ke Menara Jam (75 dtk)' },
+    ],
+  },
 ];
 
 /** Sun-soaked palette: warm sand, teal sea, coral and amber buildings, neon signs. */
@@ -194,6 +299,9 @@ export const PALETTE = {
   neonPink: '#ff5da2',
   neonCyan: '#4de8e8',
   neonAmber: '#ffb347',
+  lampGlow: '#ffd98a',
+  headlight: '#fff6b0',
+  nightShade: '#080c1c',
 };
 
 /** Where the best cash is kept between visits (this browser only). */

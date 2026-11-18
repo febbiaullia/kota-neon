@@ -1,11 +1,12 @@
 // The simulation of Kota Neon, with no drawing and no browser in it: the player on foot and
-// in cars, traffic, pedestrians, police, the wanted level, the five-mission story, combat and
-// the city itself. step() advances one fixed step and returns what happened as bit flags, so
-// the caller can react (sound, screens, saves) without the world knowing about them.
-import { BEACH, CAR, MISSIONS, PEDS, PLACES, PLAYER, POLICE, ROADS, TRAFFIC, WANTED, WORLD } from './config.js';
+// in cars and on motorcycles, traffic, pedestrians, police, the wanted level, the ten-mission
+// story, combat, the taxi side job and the day cycle — the city itself. step() advances one
+// fixed step and returns what happened as bit flags, so the caller can react (sound, screens,
+// saves) without the world knowing about them.
+import { BEACH, BIKE, CAR, DASH, DAY, MISSIONS, NITRO, PEDS, PLACES, PLAYER, POLICE, ROADS, TAXI, TRAFFIC, WANTED, WORLD } from './config.js';
 import { createCity, hitsBuilding, inSea, nearestRoadPoint, onPier, onRoad, onSand, ROAD_HALF } from './city.js';
 import { pick, range } from './random.js';
-import { ACTION_ENTER, ACTION_HONK, ACTION_PUNCH } from './input.js';
+import { ACTION_DASH, ACTION_ENTER, ACTION_HONK, ACTION_PUNCH } from './input.js';
 
 export const EVENT_PICKUP = 1;
 export const EVENT_CRASH = 2;
@@ -17,6 +18,8 @@ export const EVENT_STORY = 64;
 export const EVENT_PUNCH = 128;
 export const EVENT_FAIL = 256;
 export const EVENT_HONK = 512;
+export const EVENT_TAXI = 1024;
+export const EVENT_DASH = 2048;
 
 const TAU = Math.PI * 2;
 
@@ -67,6 +70,11 @@ export function createWorld(random) {
     missionIndex: 0, missionStep: 0, missionTimer: 0, missionLabel: '',
     marker: null, elapsed: 0, dusk: false, storyDone: false,
     toast: '', toastTimer: 0, speed: 0, passenger: false,
+    nitro: 1, nitroCooldown: 0, nitroActive: false,
+    dashCooldown: 0, dashTimer: 0, dashDir: { x: 0, y: 0 },
+    timeOfDay: 0.3, nightFactor: 0,
+    taxiActive: false, taxiFare: 0, taxiDropoff: null,
+    taxiCooldown: TAXI.firstHailDelay, taxiHail: null,
   };
 
   function toast(text, seconds = 3) {
@@ -87,10 +95,10 @@ export function createWorld(random) {
     }
   }
 
-  function makeCar(x, y, angle, kind, color, missionCar = false) {
+  function makeCar(x, y, angle, kind, color, missionCar = false, vehicle = 'car') {
     const car = {
-      id: carId += 1, x, y, angle, speed: 0, color, kind, hp: CAR.hp,
-      owned: false, missionCar, wrecked: false, smokeTimer: 0, ai: null, spin: 0,
+      id: carId += 1, x, y, angle, speed: 0, color, kind, hp: vehicle === 'bike' ? BIKE.hp : CAR.hp,
+      owned: false, missionCar, wrecked: false, smokeTimer: 0, ai: null, spin: 0, vehicle,
     };
     cars.push(car);
     return car;
@@ -99,20 +107,25 @@ export function createWorld(random) {
   function spawnTrafficCar(nearX, nearY) {
     const point = nearestRoadPoint(nearX + range(random, -600, 600), nearY + range(random, -600, 600));
     const dir = random() < 0.5 ? 1 : -1;
+    // One in five road users rides a motorcycle: quicker, narrower, same rules.
+    const vehicle = random() < BIKE.trafficChance ? 'bike' : 'car';
+    const cruise = (TRAFFIC.cruiseSpeed + range(random, -TRAFFIC.cruiseJitter, TRAFFIC.cruiseJitter)) * (vehicle === 'bike' ? 1.3 : 1);
     const car = makeCar(
       point.axis === 'v' ? point.road + laneOffset('v', dir) : point.x,
       point.axis === 'v' ? point.y : point.road + laneOffset('h', dir),
       point.axis === 'v' ? (dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (dir > 0 ? 0 : Math.PI),
       'traffic', pick(random, ['#d94f3d', '#3d7bd9', '#e8c53a', '#7a4fd9', '#e8e8e8', '#3aa655', '#e07a9e', '#2b2b33']),
+      false, vehicle,
     );
-    car.ai = { axis: point.axis, road: point.road, dir, cruise: TRAFFIC.cruiseSpeed + range(random, -TRAFFIC.cruiseJitter, TRAFFIC.cruiseJitter), turnCooldown: 0 };
+    car.ai = { axis: point.axis, road: point.road, dir, cruise, turnCooldown: 0 };
     return car;
   }
 
   function spawnParkedCar() {
     const spot = pick(random, city.parking);
     const angle = pick(random, [0, Math.PI / 2, Math.PI, -Math.PI / 2]);
-    const car = makeCar(spot.x, spot.y, angle, 'parked', pick(random, ['#d94f3d', '#3d7bd9', '#e8c53a', '#7a4fd9', '#e8e8e8', '#3aa655']));
+    const vehicle = random() < BIKE.parkedChance ? 'bike' : 'car';
+    const car = makeCar(spot.x, spot.y, angle, 'parked', pick(random, ['#d94f3d', '#3d7bd9', '#e8c53a', '#7a4fd9', '#e8e8e8', '#3aa655']), false, vehicle);
     return car;
   }
 
@@ -172,6 +185,14 @@ export function createWorld(random) {
     if (mission.id === 'mobil-pesanan') {
       const red = makeCar(PLACES.beachParking.x, PLACES.beachParking.y, Math.PI / 2, 'parked', '#d91f2e', true);
       red.hp = CAR.hp;
+    }
+    if (mission.vehicle === 'bike') {
+      // The mission vehicle is a motorcycle: park a red one where the steal step points.
+      const stealStep = mission.steps.find((s) => s.type === 'steal');
+      if (stealStep) {
+        const bike = makeCar(stealStep.x, stealStep.y, Math.PI / 2, 'parked', '#d91f2e', true, 'bike');
+        bike.hp = BIKE.hp;
+      }
     }
     const step = currentStep();
     state.missionLabel = `${mission.title}: ${step.label}`;
@@ -318,6 +339,20 @@ export function createWorld(random) {
   }
 
   function updatePlayerOnFoot(dt, move) {
+    if (state.dashCooldown > 0) state.dashCooldown = Math.max(0, state.dashCooldown - dt);
+    if (state.dashTimer > 0) {
+      // Mid-dash: burst along the dash direction, trailing cyan sparks.
+      state.dashTimer = Math.max(0, state.dashTimer - dt);
+      moveWithCollision(player, state.dashDir.x * DASH.speed * dt, state.dashDir.y * DASH.speed * dt, PLAYER.radius);
+      if (random() < 0.7) {
+        addParticle(player.x - state.dashDir.x * 10, player.y - state.dashDir.y * 10,
+          -state.dashDir.x * 40 + range(random, -30, 30), -state.dashDir.y * 40 + range(random, -30, 30), 0.3, '#4de8e8', 4);
+      }
+      player.moving = true;
+      if (player.punchCooldown > 0) player.punchCooldown -= dt;
+      if (player.invulnerable > 0) player.invulnerable -= dt;
+      return;
+    }
     const speed = move.sprint ? PLAYER.sprintSpeed : PLAYER.walkSpeed;
     let dx = move.x;
     let dy = move.y;
@@ -344,22 +379,41 @@ export function createWorld(random) {
     }
     const forward = { x: Math.cos(car.angle), y: Math.sin(car.angle) };
     const onSandNow = onSand(car.x, car.y);
-    const accelMax = onSandNow ? CAR.accel * 0.55 : CAR.accel;
+    // A motorcycle handles differently from a car: sharper steering, harder
+    // acceleration, a higher top speed — and a much smaller margin for error.
+    const tune = car.vehicle === 'bike' ? BIKE : CAR;
+    const halfWidth = car.vehicle === 'bike' ? BIKE.width / 2 + 2 : CAR.width / 2;
+    // Nitro: Shift while accelerating forward. The meter drains while it burns,
+    // locks out briefly when it runs dry, and refills while idle.
+    const wantNitro = move.sprint && move.y < 0 && state.nitroCooldown <= 0 && state.nitro > 0;
+    state.nitroActive = wantNitro;
+    if (wantNitro) {
+      state.nitro = Math.max(0, state.nitro - NITRO.drain * dt);
+      if (state.nitro <= 0) {
+        state.nitroCooldown = NITRO.emptyCooldown;
+        toast('Nitro habis! Isi ulang…', 2);
+      }
+    } else {
+      state.nitro = Math.min(1, state.nitro + NITRO.regen * dt);
+      if (state.nitroCooldown > 0) state.nitroCooldown = Math.max(0, state.nitroCooldown - dt);
+    }
+    const accelMax = (onSandNow ? tune.accel * 0.55 : tune.accel) + (wantNitro ? NITRO.accelBonus : 0);
+    const topSpeed = wantNitro ? tune.maxSpeed * NITRO.boost : tune.maxSpeed;
     if (move.y < 0) car.speed += accelMax * dt;
     else if (move.y > 0) {
-      if (car.speed > 20) car.speed -= CAR.brake * dt;
-      else car.speed -= CAR.reverseAccel * dt;
+      if (car.speed > 20) car.speed -= tune.brake * dt;
+      else car.speed -= tune.reverseAccel * dt;
     } else {
       car.speed -= Math.sign(car.speed) * 160 * dt;
       if (Math.abs(car.speed) < 8) car.speed = 0;
     }
-    car.speed = clamp(car.speed, -CAR.maxReverse, CAR.maxSpeed);
+    car.speed = clamp(car.speed, -tune.maxReverse, topSpeed);
     const steerInput = move.x;
     const steerFactor = clamp(Math.abs(car.speed) / 120, 0, 1);
-    car.angle += steerInput * CAR.steer * steerFactor * Math.sign(car.speed || 1) * dt;
+    car.angle += steerInput * tune.steer * steerFactor * Math.sign(car.speed || 1) * dt;
     const nx = car.x + Math.cos(car.angle) * car.speed * dt;
     const ny = car.y + Math.sin(car.angle) * car.speed * dt;
-    if (hitsBuilding(city, nx, ny, CAR.width / 2) || inSea(nx, ny)) {
+    if (hitsBuilding(city, nx, ny, halfWidth) || inSea(nx, ny)) {
       car.hp -= Math.abs(car.speed) * 0.06;
       sparks(car.x + Math.cos(car.angle) * 34, car.y + Math.sin(car.angle) * 34, 8, '#ffb347');
       car.speed *= -0.25;
@@ -377,6 +431,14 @@ export function createWorld(random) {
     state.speed = Math.abs(car.speed);
     if (Math.abs(car.speed) > 60 && random() < 0.3) {
       addParticle(car.x - forward.x * 34, car.y - forward.y * 34, -forward.x * 30 + range(random, -20, 20), -forward.y * 30 + range(random, -20, 20), 0.4, '#c9c2ae', 3);
+    }
+    if (wantNitro) {
+      // Exhaust flames: bright orange and yellow, streaming backwards.
+      for (let i = 0; i < 2; i += 1) {
+        addParticle(car.x - forward.x * 36 + range(random, -6, 6), car.y - forward.y * 36 + range(random, -6, 6),
+          -forward.x * range(random, 120, 220) + range(random, -30, 30), -forward.y * range(random, 120, 220) + range(random, -30, 30),
+          range(random, 0.2, 0.35), pick(random, ['#ff9a3d', '#ffd23f', '#ff5b2e']), range(random, 4, 7));
+      }
     }
     if (car.hp < 40 && random() < 0.2) {
       addParticle(car.x, car.y - 10, range(random, -10, 10), -40, 0.8, '#555', 6);
@@ -627,6 +689,78 @@ export function createWorld(random) {
     }
   }
 
+  /** How dark the night is at a time of day: 0 in daylight, ramping up through dusk
+   * to 1 at full night, then fading back out at dawn. */
+  function nightFactorAt(tod) {
+    if (tod >= DAY.nightStart) return 1;
+    if (tod >= DAY.duskStart) return (tod - DAY.duskStart) / (DAY.nightStart - DAY.duskStart);
+    if (tod <= DAY.dawnEnd) return 1 - tod / DAY.dawnEnd;
+    return 0;
+  }
+
+  function updateTime(dt) {
+    state.timeOfDay = (state.timeOfDay + dt / DAY.dayLength) % 1;
+    state.nightFactor = nightFactorAt(state.timeOfDay);
+  }
+
+  /** The taxi side job. A passenger waits at a random place once the player is
+   * driving; pull up close to pick them up, then the fare meter runs with the
+   * distance driven until the drop-off. Quitting the car mid-fare loses them. */
+  function updateTaxi(dt, events) {
+    if (state.taxiCooldown > 0) state.taxiCooldown -= dt;
+    const inCar = player.inCar !== null;
+    if (!state.taxiActive && !state.taxiHail && state.taxiCooldown <= 0 && inCar) {
+      // A new hail: a waiting passenger at a random place, never right on top of the player.
+      const spots = [PLACES.park, PLACES.cafe, PLACES.tower, PLACES.market, PLACES.terminal, PLACES.kiosk];
+      for (let tries = 0; tries < 8; tries += 1) {
+        const spot = pick(random, spots);
+        if (distance(player.x, player.y, spot.x, spot.y) > 500) {
+          state.taxiHail = { x: spot.x, y: spot.y, place: spot.name };
+          break;
+        }
+      }
+    }
+    if (state.taxiHail && inCar && distance(player.x, player.y, state.taxiHail.x, state.taxiHail.y) < TAXI.waitRadius) {
+      // Picked up: choose a different place as the destination and start the meter.
+      // The destination is drawn from every place except the one the passenger
+      // boarded at, so a fare never ends where it began.
+      const spots = [PLACES.park, PLACES.cafe, PLACES.tower, PLACES.market, PLACES.terminal, PLACES.kiosk, PLACES.pier]
+        .filter((p) => p.name !== state.taxiHail.place);
+      const drop = pick(random, spots);
+      state.taxiDropoff = { x: drop.x, y: drop.y, place: drop.name };
+      state.taxiFare = TAXI.baseFare;
+      state.taxiActive = true;
+      state.taxiHail = null;
+      toast(`Penumpang naik! Antar ke ${drop.name}.`, 3);
+      return events | EVENT_TAXI;
+    }
+    if (state.taxiActive) {
+      if (!inCar) {
+        // Stepped out mid-fare: the passenger leaves and the fare is lost.
+        state.taxiActive = false;
+        state.taxiDropoff = null;
+        state.taxiFare = 0;
+        state.taxiCooldown = TAXI.cooldownAfterQuit;
+        toast('Penumpang turun — argo hangus.', 3);
+        return events;
+      }
+      // The meter ticks with the distance driven.
+      state.taxiFare += Math.abs(state.speed) * dt * TAXI.farePerMetre;
+      const drop = state.taxiDropoff;
+      if (drop && distance(player.x, player.y, drop.x, drop.y) < TAXI.dropoffRadius) {
+        const paid = Math.round(state.taxiFare);
+        state.cash += paid;
+        toast(`Argo dibayar! +$${paid}`, 4);
+        state.taxiActive = false;
+        state.taxiDropoff = null;
+        state.taxiFare = 0;
+        state.taxiCooldown = TAXI.cooldownAfterFare;
+        return events | EVENT_TAXI;
+      }
+    }
+    return events;
+  }
+
   function updateTrafficDensity() {
     const near = cars.filter((c) => c.kind === 'traffic' && distance(c.x, c.y, player.x, player.y) < 1400).length;
     if (near < 8 && random() < 0.05) spawnTrafficCar(player.x, player.y);
@@ -679,6 +813,19 @@ export function createWorld(random) {
     state.toastTimer = 0;
     state.speed = 0;
     state.passenger = false;
+    state.nitro = 1;
+    state.nitroCooldown = 0;
+    state.nitroActive = false;
+    state.dashCooldown = 0;
+    state.dashTimer = 0;
+    state.dashDir = { x: 0, y: 0 };
+    state.timeOfDay = 0.3;
+    state.nightFactor = 0;
+    state.taxiActive = false;
+    state.taxiFare = 0;
+    state.taxiDropoff = null;
+    state.taxiCooldown = TAXI.firstHailDelay;
+    state.taxiHail = null;
     for (let i = 0; i < TRAFFIC.count; i += 1) spawnTrafficCar(PLACES.garage.x, PLACES.garage.y);
     for (let i = 0; i < 6; i += 1) spawnParkedCar();
     for (let i = 0; i < PEDS.count; i += 1) spawnPed();
@@ -706,6 +853,21 @@ export function createWorld(random) {
       else events = enterCar(events);
     }
     if (actions & ACTION_PUNCH) events = punch(events);
+    if ((actions & ACTION_DASH) && player.inCar === null && state.dashCooldown <= 0 && state.dashTimer <= 0) {
+      // Dash: burst in the direction of movement, or the facing direction if still.
+      const len = Math.hypot(move.x, move.y);
+      const dx = len > 0 ? move.x / len : Math.cos(player.angle);
+      const dy = len > 0 ? move.y / len : Math.sin(player.angle);
+      state.dashDir = { x: dx, y: dy };
+      state.dashTimer = DASH.duration;
+      state.dashCooldown = DASH.cooldown;
+      player.angle = Math.atan2(dy, dx);
+      for (let i = 0; i < 8; i += 1) {
+        addParticle(player.x - dx * 10, player.y - dy * 10,
+          -dx * range(random, 40, 120) + range(random, -40, 40), -dy * range(random, 40, 120) + range(random, -40, 40), 0.35, '#4de8e8', 4);
+      }
+      events |= EVENT_DASH;
+    }
     if (actions & ACTION_HONK && audio) audio.honk();
 
     if (player.inCar !== null) updatePlayerCar(dt, move);
@@ -715,7 +877,9 @@ export function createWorld(random) {
     updatePeds(dt);
     events = updatePolice(dt, events);
     events = updateMissions(dt, events);
+    events = updateTaxi(dt, events);
     updateWanted(dt);
+    updateTime(dt);
     updateTrafficDensity();
     updateParticles(dt);
     updateCamera(dt);
@@ -734,6 +898,16 @@ export function createWorld(random) {
     state.wanted = 0;
     state.wantedTimer = 0;
     state.bustHold = 0;
+    state.nitro = 1;
+    state.nitroCooldown = 0;
+    state.nitroActive = false;
+    state.dashCooldown = 0;
+    state.dashTimer = 0;
+    state.taxiActive = false;
+    state.taxiFare = 0;
+    state.taxiDropoff = null;
+    state.taxiHail = null;
+    state.taxiCooldown = TAXI.cooldownAfterQuit;
     player.hp = PLAYER.hp;
     player.inCar = null;
     player.x = PLACES.garage.x;

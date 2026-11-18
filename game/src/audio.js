@@ -137,6 +137,21 @@ export function createAudio() {
       tone(233, 0.18, 'square', 0.2);
       tone(294, 0.18, 'square', 0.15);
     },
+    /** The taxi chime: a bright two-note ding when a passenger boards or pays. */
+    taxi() {
+      tone(660, 0.12, 'triangle', 0.25);
+      tone(880, 0.2, 'triangle', 0.25, 0.1);
+    },
+    /** The nitro whoosh: a short rush of filtered noise as the boost catches.
+     * Cut at 1800 Hz so it reads bright over the engine, not muddy under it. */
+    nitro() {
+      noise(0.3, 0.35, 1800);
+      tone(180, 0.25, 'sawtooth', 0.12);
+    },
+    /** The dash swish: a quick high swish as the player bursts forward. */
+    dash() {
+      noise(0.12, 0.3, 2600);
+    },
     steal() {
       tone(520, 0.1, 'triangle', 0.25);
       tone(392, 0.16, 'triangle', 0.25, 0.08);

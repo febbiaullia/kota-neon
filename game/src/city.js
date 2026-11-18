@@ -144,6 +144,25 @@ export function createCity(random) {
   return { buildings, trees, parking };
 }
 
+/** True when the point is on a sidewalk: on a block, but not inside a building. */
+export function onSidewalk(city, x, y) {
+  return !onRoad(x, y) && !insideBuilding(city, x, y) && !inSea(x, y) && !onSand(x, y);
+}
+
+/** The street-lamp positions: one at the sidewalk corner of every avenue/street
+ * crossing. They only shine at night, but their places are fixed by the city.
+ * The corner alternates by crossing, so the lamps do not all sit on one side. */
+export function streetLampPositions() {
+  const lamps = [];
+  ROADS.avenues.forEach((avenue, ai) => {
+    ROADS.streets.forEach((street, si) => {
+      const side = (ai + si) % 2 === 0 ? 1 : -1;
+      lamps.push({ x: avenue + side * (ROAD_HALF + 16), y: street + ROAD_HALF + 16 });
+    });
+  });
+  return lamps;
+}
+
 /** True when the point is inside any building (solid). */
 export function insideBuilding(city, x, y) {
   for (const b of city.buildings) {

@@ -28,8 +28,10 @@ const DRIVE_ROUTE = [
 ];
 
 /** Steer the player's car toward the next waypoint on the route. Brakes into sharp turns,
- * and reverses out if it ever gets wedged. `stuck` carries the recovery state. */
-function driveAutopilot(world, routeIndex, stuck) {
+ * and reverses out if it ever gets wedged. `stuck` carries the recovery state. When
+ * `nitro` is true the autopilot holds Shift, so the run ends on a nitro boost with
+ * exhaust flames in the frame. */
+function driveAutopilot(world, routeIndex, stuck, nitro) {
   const state = world.state;
   const car = world.playerCar();
   if (!car) return { move: { x: 0, y: 0, sprint: false }, routeIndex };
@@ -61,7 +63,7 @@ function driveAutopilot(world, routeIndex, stuck) {
   }
   // Brake into a sharp turn instead of sliding into a building.
   const throttle = Math.abs(diff) > 0.7 && speed > 120 ? 1 : -1;
-  return { move: { x: steer, y: throttle, sprint: false }, routeIndex };
+  return { move: { x: steer, y: throttle, sprint: !!nitro }, routeIndex };
 }
 
 /** Put the player in the starter car by the garage. */
@@ -77,13 +79,13 @@ function putPlayerInStarterCar(world) {
 }
 
 /**
- * Set `world` to the named scene (start, drive, chase, mission; any other name is start)
- * and return the screen to draw over it and the best cash to show.
+ * Set `world` to the named scene (start, drive, chase, mission, night; any other name
+ * is start) and return the screen to draw over it and the best cash to show.
  */
 export function stageShot(name, world) {
   world.reset();
   const state = world.state;
-  if (name !== 'drive' && name !== 'chase' && name !== 'mission') {
+  if (name !== 'drive' && name !== 'chase' && name !== 'mission' && name !== 'night') {
     for (let i = 0; i < START_SECONDS / STEP; i += 1) {
       world.step(STEP, { x: 0, y: 0, sprint: false }, 0, null);
     }
@@ -93,6 +95,7 @@ export function stageShot(name, world) {
     // Dusk at the pier: the last delivery of mission 3, marker lit, cash on the line.
     // The player stands on the pier looking at the marker (80 m away, outside the
     // delivery radius) while traffic moves behind — the moment before the drop-off.
+    // The frame catches a dash toward the marker: cyan streaks behind the player.
     state.dusk = true;
     state.missionIndex = 2;
     state.missionStep = 1;
@@ -109,7 +112,41 @@ export function stageShot(name, world) {
     for (let i = 0; i < MISSION_SECONDS / STEP; i += 1) {
       world.step(STEP, { x: 0, y: 0, sprint: false }, 0, null);
     }
+    // Stage the dash for the frame: the renderer draws the streaks while the timer runs.
+    state.dashTimer = 0.18;
+    state.dashDir = { x: 0, y: 1 };
     return { screen: SCREEN_PLAY, best: 1250 };
+  }
+  if (name === 'night') {
+    // Night ride: full dark, street lamps glowing, headlights on, police behind,
+    // and a nitro boost to close the scene — the city after dark. The night factor
+    // follows from timeOfDay through the world's own day cycle, no manual override.
+    state.timeOfDay = 0.85;
+    putPlayerInStarterCar(world);
+    const nightCar = world.playerCar();
+    if (nightCar) {
+      nightCar.x = 1500;
+      nightCar.y = 800;
+      nightCar.angle = 0;
+      nightCar.speed = 0;
+      state.player.x = 1500;
+      state.player.y = 800;
+      state.player.angle = 0;
+    }
+    state.wanted = 2;
+    const nightLimit = 20;
+    let nightRoute = 2;
+    const nightStuck = { still: 0, reversing: 0 };
+    for (let i = 0; i < nightLimit / STEP; i += 1) {
+      const nitro = i >= (nightLimit - 3) / STEP;
+      const drive = driveAutopilot(world, nightRoute, nightStuck, nitro);
+      nightRoute = drive.routeIndex;
+      world.step(STEP, drive.move, 0, null);
+    }
+    state.toast = 'Malam di Kota Neon — lampu menyala, nitro menyala.';
+    state.toastTimer = 30;
+    const nightOver = world.state.player.hp <= 0;
+    return { screen: nightOver ? SCREEN_OVER : SCREEN_PLAY, best: 1250 };
   }
   putPlayerInStarterCar(world);
   // Stage the car on the avenue at the start of the route, facing north: the drive
@@ -127,11 +164,22 @@ export function stageShot(name, world) {
   if (name === 'chase') {
     state.wanted = 3;
   }
+  if (name === 'drive') {
+    // Dusk drive: the lamps are already on and the headlights cut through, so the
+    // nitro flames read against the evening city — and a motorcycle waits parked
+    // by the road, so the second vehicle shows in the frame. timeOfDay 0.68 sits
+    // just past dusk, so the world's day cycle keeps the lamps lit for the whole run.
+    state.timeOfDay = 0.68;
+    const parkedBike = state.cars.find((c) => c.kind === 'parked' && Math.abs(c.x - 900) < 400 && Math.abs(c.y - 610) < 400);
+    if (parkedBike) parkedBike.vehicle = 'bike';
+  }
   const limit = name === 'chase' ? CHASE_SECONDS : DRIVE_SECONDS;
   let routeIndex = 0;
   const stuck = { still: 0, reversing: 0 };
   for (let i = 0; i < limit / STEP; i += 1) {
-    const drive = driveAutopilot(world, routeIndex, stuck);
+    // Nitro for the last 3 seconds, so the frame ends on a boost with flames.
+    const nitro = i >= (limit - 3) / STEP;
+    const drive = driveAutopilot(world, routeIndex, stuck, nitro);
     routeIndex = drive.routeIndex;
     world.step(STEP, drive.move, 0, null);
   }

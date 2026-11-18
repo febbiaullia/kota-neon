@@ -6,9 +6,9 @@
 //
 // ?seed=N fixes the city and the traffic. ?shot=start|drive|chase|mission (with &seed=N)
 // stages that scene instead of running the loop, paints it twice and sets window.__shotReady.
-import { BEST_KEY, PLAYER, SAVE_KEY, STEP } from './config.js';
+import { BEST_KEY, BIKE, CAR, NITRO, PLAYER, SAVE_KEY, STEP } from './config.js';
 import { createRandom } from './random.js';
-import { createWorld, EVENT_BUSTED, EVENT_CRASH, EVENT_FAIL, EVENT_HIT, EVENT_MISSION, EVENT_PICKUP, EVENT_PUNCH, EVENT_STEAL, EVENT_STORY } from './world.js';
+import { createWorld, EVENT_BUSTED, EVENT_CRASH, EVENT_DASH, EVENT_FAIL, EVENT_HIT, EVENT_MISSION, EVENT_PICKUP, EVENT_PUNCH, EVENT_STEAL, EVENT_STORY, EVENT_TAXI } from './world.js';
 import { createAudio } from './audio.js';
 import { ACTION_CONFIRM, ACTION_ENTER, ACTION_MUTE, ACTION_PAUSE, ACTION_PUNCH, createInput } from './input.js';
 import { createRenderer, SCREEN_BUSTED, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
@@ -172,6 +172,8 @@ function runGame() {
     if (events & EVENT_HIT) announce(`Kamu kena! HP ${Math.max(0, Math.round(world.state.player.hp))}.`);
     if (events & EVENT_STEAL) audio.steal();
     if (events & EVENT_PUNCH) audio.punch();
+    if (events & EVENT_TAXI) audio.taxi();
+    if (events & EVENT_DASH) audio.dash();
     if (events & EVENT_FAIL) announce('Misi gagal — coba lagi dari bengkel.');
   }
 
@@ -205,9 +207,16 @@ function runGame() {
   }
 
   function stepWorld(dt, move, actions) {
+    const wasNitro = world.state.nitroActive;
     const events = world.step(dt, move, actions, audio);
     handleEvents(events);
-    audio.engine(world.state.speed, 560);
+    // A whoosh the first frame the nitro catches, not every frame it burns.
+    if (world.state.nitroActive && !wasNitro) audio.nitro();
+    // The engine note follows the vehicle the player is actually in: a bike's top
+    // speed is higher than a car's, so its engine should climb higher too.
+    const playerVehicle = world.playerCar();
+    const vehicleTop = playerVehicle && playerVehicle.vehicle === 'bike' ? BIKE.maxSpeed : CAR.maxSpeed;
+    audio.engine(world.state.speed, world.state.nitroActive ? vehicleTop * NITRO.boost : vehicleTop);
     audio.siren(dt, world.state.wanted);
   }
 
