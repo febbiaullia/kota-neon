@@ -1,5 +1,6 @@
 // A tiny static server for game/ (Node 22, standard library only), so Kota Neon can be
-// played locally without a build step: `node serve.ts` serves game/ on http://localhost:8080.
+// played locally without a build step: `node serve.ts` serves game/ on http://localhost:8080,
+// or HOST=0.0.0.0 node serve.ts to play from another device on the same network.
 // It sends the MIME types a browser game needs, refuses any path outside game/, and
 // otherwise does nothing clever: a development convenience, not a server for the internet.
 import { createReadStream, statSync } from 'node:fs';
@@ -12,6 +13,9 @@ const args = process.argv.slice(2);
 const portIndex = args.indexOf('--port');
 const requested = portIndex === -1 ? 8080 : Number(args[portIndex + 1]);
 const port = Number.isInteger(requested) && requested > 0 && requested < 65536 ? requested : 8080;
+// HOST overrides the bind address (127.0.0.1 by default): set HOST=0.0.0.0 to
+// play from another device on the same network.
+const host = process.env.HOST ?? '127.0.0.1';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -63,6 +67,6 @@ createServer((request, response) => {
     'cache-control': 'no-store',
   });
   createReadStream(file).pipe(response);
-}).listen(port, '127.0.0.1', () => {
-  console.log(`game/ is on http://localhost:${port}`);
+}).listen(port, host, () => {
+  console.log(`game/ is on http://${host}:${port}`);
 });
