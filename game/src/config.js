@@ -31,6 +31,9 @@ export const PLACES = {
   beachParking: { x: 2100, y: 2350, name: 'Parkir Pantai' },
   market: { x: 2700, y: 550, name: 'Pasar Neon' },
   terminal: { x: 300, y: 1800, name: 'Terminal Kota' },
+  airport: { x: 3300, y: 300, name: 'Bandara Neon' },
+  stadium: { x: 300, y: 300, name: 'Stadion Kota' },
+  gasStation: { x: 1500, y: 1800, name: 'SPBU Neon' },
 };
 
 /** The player on foot. */
@@ -121,6 +124,53 @@ export const TAXI = {
   firstHailDelay: 8,
 };
 
+/** Fuel: the tank (0..1) drains with distance driven, refills at the SPBU for cash.
+ * A full tank lasts about three minutes of hard driving; the pump fills a quarter
+ * tank a second, so a dry tank costs a few seconds and about $150. */
+export const FUEL = {
+  drainPerMetre: 0.00002,
+  refillRate: 0.25,
+  pricePerUnit: 150,
+  lowWarn: 0.2,
+  refillRadius: 120,
+};
+
+/** Repair: press R near Bengkel Sari to fix the car you are driving. The bill is
+ * per missing HP with a minimum, so a scratch is cheap and a wreck is not. */
+export const REPAIR = {
+  pricePerHp: 2,
+  minCost: 40,
+  radius: 110,
+};
+
+/** Police roadblocks: once the wanted level hits 3, the police park across the
+ * road ahead of the player and cone it off. Ramming a cone hurts the car. */
+export const ROADBLOCK = {
+  minWanted: 3,
+  maxActive: 3,
+  spawnCooldown: 20,
+  aheadDistance: 520,
+  coneCount: 4,
+  hitRadius: 38,
+  hitDamage: 6,
+  hitCooldown: 1,
+};
+
+/** The VIP passenger job (a second side job beside the taxi): a named client waits
+ * at the airport or the stadium, pays a base fare plus per-metre, and tips extra
+ * when the drop-off beats the par time. */
+export const PASSENGER = {
+  baseFare: 60,
+  perMetre: 0.25,
+  tipPerSecond: 2,
+  parTime: 60,
+  waitRadius: 90,
+  dropoffRadius: 80,
+  cooldown: 30,
+  firstDelay: 20,
+  clients: ['Bos Raka', 'Mba Lilis', 'Pak Dedi', 'Nona Sinta'],
+};
+
 /** Traffic cars that drive the roads on their own. */
 export const TRAFFIC = {
   count: 14,
@@ -157,7 +207,7 @@ export const WANTED = {
   decayClearRadius: 420,
 };
 
-/** The ten-mission story chain. Steps are checked by the world, in order. */
+/** The twelve-mission story chain. Steps are checked by the world, in order. */
 export const MISSIONS = [
   {
     id: 'paket-pertama',
@@ -262,6 +312,35 @@ export const MISSIONS = [
     steps: [
       { type: 'goto', x: PLACES.garage.x, y: PLACES.garage.y, radius: 70, label: 'Ambil paket legenda di bengkel' },
       { type: 'timed', x: PLACES.tower.x, y: PLACES.tower.y, radius: 80, time: 75, label: 'Antar ke Menara Jam (75 dtk)' },
+    ],
+  },
+  {
+    id: 'balapan-tengah-malam',
+    title: 'Balapan Tengah Malam',
+    briefing: 'Bu Sari: "Ada yang menantangmu balapan, Nara. Lewati semua checkpoint — Bandara, Stadion, Terminal, Menara — dalam 110 detik. Polisi ikut menonton, jadi jangan berhenti."',
+    reward: 650,
+    wanted: 2,
+    steps: [
+      {
+        type: 'race', time: 110, label: 'Balapan Tengah Malam (110 dtk)',
+        checkpoints: [
+          { x: PLACES.airport.x, y: PLACES.airport.y, radius: 80, label: 'Checkpoint 1: Bandara Neon' },
+          { x: PLACES.stadium.x, y: PLACES.stadium.y, radius: 80, label: 'Checkpoint 2: Stadion Kota' },
+          { x: PLACES.terminal.x, y: PLACES.terminal.y, radius: 80, label: 'Checkpoint 3: Terminal Kota' },
+          { x: PLACES.tower.x, y: PLACES.tower.y, radius: 80, label: 'Finis: Menara Jam' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'pengiriman-terakhir',
+    title: 'Pengiriman Terakhir',
+    briefing: 'Bu Sari: "Paket VIP mendarat di Bandara Neon. Antar ke Stadion Kota — 120 detik, dan seluruh kota mengawasi. Ini yang terakhir, Nara. Buatlah berarti."',
+    reward: 900,
+    wanted: 3,
+    steps: [
+      { type: 'goto', x: PLACES.airport.x, y: PLACES.airport.y, radius: 80, label: 'Ambil paket VIP di Bandara Neon' },
+      { type: 'timed', x: PLACES.stadium.x, y: PLACES.stadium.y, radius: 80, time: 120, label: 'Antar ke Stadion Kota (120 dtk)' },
     ],
   },
 ];

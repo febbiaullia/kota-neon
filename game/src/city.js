@@ -74,12 +74,45 @@ function blockRanges() {
 function specialBlock(block, random) {
   const park = { x0: 970, y0: 870, x1: 1430, y1: 1230 };
   const plaza = { x0: 1570, y0: 1370, x1: 2030, y1: 1730 };
+  const airport = { x0: 3000, y0: 100, x1: 3560, y1: 480 };
+  const stadium = { x0: 100, y0: 100, x1: 560, y1: 480 };
   const centreX = (block.x0 + block.x1) / 2;
   const centreY = (block.y0 + block.y1) / 2;
   if (centreX > park.x0 && centreX < park.x1 && centreY > park.y0 && centreY < park.y1) return 'park';
   if (centreX > plaza.x0 && centreX < plaza.x1 && centreY > plaza.y0 && centreY < plaza.y1) return 'plaza';
+  if (centreX > airport.x0 && centreX < airport.x1 && centreY > airport.y0 && centreY < airport.y1) return 'airport';
+  if (centreX > stadium.x0 && centreX < stadium.x1 && centreY > stadium.y0 && centreY < stadium.y1) return 'stadium';
   if (random() < 0.12) return 'empty';
   return 'buildings';
+}
+
+/** The airport district: a runway strip and a terminal slab, fixed so the
+ * renderer and the missions can find them without searching the blocks. */
+export const AIRPORT = { x: 3300, y: 300, w: 420, h: 220, runway: { x: 3150, y: 250, w: 300, h: 56 } };
+
+/** The stadium district: an oval field with stands, at the north-west corner. */
+export const STADIUM = { x: 300, y: 300, rx: 175, ry: 115 };
+
+/** True when the point is on the airport apron (drivable, flat). */
+export function inAirport(x, y) {
+  return x > AIRPORT.x - AIRPORT.w / 2 && x < AIRPORT.x + AIRPORT.w / 2
+    && y > AIRPORT.y - AIRPORT.h / 2 && y < AIRPORT.y + AIRPORT.h / 2;
+}
+
+/** True when the point is inside the stadium bowl. */
+export function inStadium(x, y) {
+  const dx = (x - STADIUM.x) / STADIUM.rx;
+  const dy = (y - STADIUM.y) / STADIUM.ry;
+  return dx * dx + dy * dy < 1;
+}
+
+/** Where the car services are: the SPBU pump and the garage workshop. The world
+ * checks these for refuelling and repairs; the renderer draws their signs. */
+export function servicePoints() {
+  return [
+    { type: 'gas', x: PLACES.gasStation.x, y: PLACES.gasStation.y, name: PLACES.gasStation.name },
+    { type: 'repair', x: PLACES.garage.x, y: PLACES.garage.y, name: PLACES.garage.name },
+  ];
 }
 
 export function createCity(random) {
@@ -104,6 +137,21 @@ export function createCity(random) {
       for (let i = 0; i < 8; i += 1) {
         const angle = (i / 8) * Math.PI * 2;
         trees.push({ x: 1800 + Math.cos(angle) * 150, y: 1550 + Math.sin(angle) * 110, r: 14 });
+      }
+      continue;
+    }
+    if (kind === 'airport') {
+      // The runway stays clear of buildings: a few trees at the apron edge only.
+      for (let i = 0; i < 6; i += 1) {
+        trees.push({ x: range(random, 3100, 3500), y: range(random, 430, 470), r: 12 });
+      }
+      continue;
+    }
+    if (kind === 'stadium') {
+      // Floodlight poles around the bowl, drawn by the renderer at night.
+      for (let i = 0; i < 4; i += 1) {
+        const angle = (i / 4) * Math.PI * 2 + Math.PI / 4;
+        trees.push({ x: 300 + Math.cos(angle) * 200, y: 300 + Math.sin(angle) * 140, r: 10 });
       }
       continue;
     }
@@ -140,8 +188,15 @@ export function createCity(random) {
   parking.push({ x: PLACES.beachParking.x - 60, y: PLACES.beachParking.y });
   parking.push({ x: PLACES.beachParking.x + 60, y: PLACES.beachParking.y });
   parking.push({ x: PLACES.beachParking.x, y: PLACES.beachParking.y - 60 });
+  // Spots by the new districts and the SPBU, so cars wait where the story goes.
+  parking.push({ x: PLACES.airport.x - 240, y: PLACES.airport.y + 60 });
+  parking.push({ x: PLACES.airport.x + 240, y: PLACES.airport.y - 60 });
+  parking.push({ x: PLACES.stadium.x + 220, y: PLACES.stadium.y });
+  parking.push({ x: PLACES.stadium.x - 220, y: PLACES.stadium.y + 60 });
+  parking.push({ x: PLACES.gasStation.x + 120, y: PLACES.gasStation.y });
+  parking.push({ x: PLACES.gasStation.x - 120, y: PLACES.gasStation.y + 40 });
 
-  return { buildings, trees, parking };
+  return { buildings, trees, parking, airport: AIRPORT, stadium: STADIUM };
 }
 
 /** True when the point is on a sidewalk: on a block, but not inside a building. */

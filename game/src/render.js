@@ -1,7 +1,7 @@
 // Drawing only: the world's state and the current screen in, pixels out. The camera shows a
 // 1280x720 window of the 3600x2600 city, scaled to fit the browser window. Canvas shapes and
 // text only: every building, car, palm tree and neon sign is drawn in code.
-import { BEACH, CAR, DASH, FONT, PALETTE, PLACES, PLAYER, ROADS, VIEW, WORLD } from './config.js';
+import { BEACH, CAR, DASH, FONT, FUEL, PALETTE, PLACES, PLAYER, ROADS, VIEW, WORLD } from './config.js';
 import { ROAD_HALF, onRoad, streetLampPositions } from './city.js';
 
 export const SCREEN_TITLE = 'title';
@@ -191,6 +191,128 @@ export function createRenderer(canvas) {
     textPlain('Taman Neon', 1200, 1050, 20, 'rgba(255,255,255,0.75)', 'center');
     textPlain('Pantai Senja', 900, 2400, 22, 'rgba(120,70,20,0.8)', 'center');
     textPlain('Dermaga Senja', PLACES.pier.x, 2345, 18, 'rgba(255,255,255,0.85)', 'center');
+    drawDistricts(state);
+  }
+
+  /** The new districts: the airport runway and terminal, the stadium bowl, and
+   * the SPBU pump — plus neon signs that pulse with the city's own clock. */
+  function drawDistricts(state) {
+    const airport = state.city.airport;
+    const stadium = state.city.stadium;
+    const pulse = 0.55 + Math.sin(state.elapsed * 3) * 0.35;
+    // Airport: tarmac apron, runway with dashes, terminal slab, windsock.
+    context.fillStyle = '#6a6f7a';
+    context.fillRect(airport.x - airport.w / 2, airport.y - airport.h / 2, airport.w, airport.h);
+    context.fillStyle = '#3d3f4a';
+    context.fillRect(airport.runway.x, airport.runway.y, airport.runway.w, airport.runway.h);
+    context.fillStyle = '#e8e8e8';
+    for (let x = airport.runway.x + 12; x < airport.runway.x + airport.runway.w - 12; x += 44) {
+      context.fillRect(x, airport.runway.y + airport.runway.h / 2 - 3, 24, 6);
+    }
+    context.fillStyle = '#c9c2ae';
+    context.fillRect(airport.x - 90, airport.y + 60, 180, 34);
+    context.fillStyle = `rgba(77,232,232,${pulse.toFixed(2)})`;
+    roundedRect(context, airport.x - 100, airport.y - 96, 200, 30, 6);
+    context.fill();
+    text('BANDARA NEON', airport.x, airport.y - 74, 17, '#fff', 'center');
+    // Stadium: green oval field, grey stands ring, floodlight poles.
+    context.fillStyle = '#8a8f96';
+    context.beginPath();
+    context.ellipse(stadium.x, stadium.y, stadium.rx + 22, stadium.ry + 22, 0, 0, Math.PI * 2);
+    context.fill();
+    context.fillStyle = '#5d8f4e';
+    context.beginPath();
+    context.ellipse(stadium.x, stadium.y, stadium.rx, stadium.ry, 0, 0, Math.PI * 2);
+    context.fill();
+    context.strokeStyle = 'rgba(255,255,255,0.7)';
+    context.lineWidth = 3;
+    context.beginPath();
+    context.ellipse(stadium.x, stadium.y, stadium.rx * 0.55, stadium.ry * 0.55, 0, 0, Math.PI * 2);
+    context.stroke();
+    context.beginPath();
+    context.moveTo(stadium.x, stadium.y - stadium.ry);
+    context.lineTo(stadium.x, stadium.y + stadium.ry);
+    context.stroke();
+    context.fillStyle = `rgba(255,93,162,${pulse.toFixed(2)})`;
+    roundedRect(context, stadium.x - 110, stadium.y - stadium.ry - 52, 220, 30, 6);
+    context.fill();
+    text('STADION KOTA', stadium.x, stadium.y - stadium.ry - 30, 17, '#fff', 'center');
+    // The SPBU: a red-and-white pump island on the avenue corner.
+    const gas = PLACES.gasStation;
+    context.fillStyle = '#c9c2ae';
+    context.fillRect(gas.x - 46, gas.y - 34, 92, 68);
+    context.fillStyle = '#d94f3d';
+    context.fillRect(gas.x - 30, gas.y - 26, 60, 52);
+    context.fillStyle = '#fff';
+    context.fillRect(gas.x - 30, gas.y - 26, 60, 14);
+    text('SPBU', gas.x, gas.y - 30, 15, '#d94f3d', 'center');
+    text('BENSIN', gas.x, gas.y + 18, 13, '#fff', 'center');
+    // Neon signs at the market and the garage, pulsing with the same clock.
+    context.fillStyle = `rgba(255,179,71,${pulse.toFixed(2)})`;
+    roundedRect(context, PLACES.market.x - 90, PLACES.market.y - 84, 180, 28, 6);
+    context.fill();
+    text('PASAR NEON', PLACES.market.x, PLACES.market.y - 63, 16, '#232a3d', 'center');
+  }
+
+  /** Roadblocks: orange cones with white stripes, a striped barrier plank across
+   * the road, and two parked police cars facing outward. */
+  function drawRoadblocks(state) {
+    for (const block of state.roadblocks) {
+      for (const cone of block.cones) {
+        context.fillStyle = '#e5534b';
+        context.beginPath();
+        context.moveTo(cone.x, cone.y - 14);
+        context.lineTo(cone.x + 10, cone.y + 8);
+        context.lineTo(cone.x - 10, cone.y + 8);
+        context.closePath();
+        context.fill();
+        context.fillStyle = '#fff';
+        context.fillRect(cone.x - 6, cone.y - 2, 12, 5);
+      }
+      context.fillStyle = 'rgba(232,211,90,0.9)';
+      context.fillRect(block.x - 70, block.y - 6, 140, 10);
+      context.fillStyle = '#232a3d';
+      for (let x = block.x - 70; x < block.x + 70; x += 28) {
+        context.fillRect(x, block.y - 6, 14, 10);
+      }
+      // Two police cars parked across the road behind the cones.
+      const perp = block.axis === 'v' ? Math.PI / 2 : 0;
+      drawCarShape({ x: block.x - 60, y: block.y, angle: perp, color: '#2b4acb', kind: 'police', wrecked: false, missionCar: false, vehicle: 'car' });
+      drawCarShape({ x: block.x + 60, y: block.y, angle: perp + Math.PI, color: '#2b4acb', kind: 'police', wrecked: false, missionCar: false, vehicle: 'car' });
+    }
+  }
+
+  /** Damage smoke: a wrecked or badly hurt car smokes from the bonnet, grey puffs
+   * that drift up and fade with the city's clock. */
+  function drawDamageSmoke(state) {
+    for (const car of state.cars) {
+      if (car.hp >= 40 || car.wrecked) continue;
+      for (let i = 0; i < 3; i += 1) {
+        const wobble = Math.sin(state.elapsed * 4 + i * 2.1) * 8;
+        const rise = ((state.elapsed * 30 + i * 22) % 60);
+        context.fillStyle = `rgba(90,90,90,${(0.5 - rise / 140).toFixed(2)})`;
+        context.beginPath();
+        context.arc(car.x + wobble, car.y - 14 - rise, 7 + rise * 0.12, 0, Math.PI * 2);
+        context.fill();
+      }
+    }
+  }
+
+  /** Light rain at night: short slanted streaks, placed by the city's clock so
+   * the same moment always looks the same. */
+  function drawRain(state) {
+    if (state.nightFactor <= 0.5) return;
+    const cam = state.camera;
+    context.strokeStyle = 'rgba(180,200,255,0.28)';
+    context.lineWidth = 2;
+    for (let i = 0; i < 60; i += 1) {
+      const x = cam.x + ((i * 173 + state.elapsed * 600) % (VIEW.width + 40)) - 20;
+      const y = cam.y + ((i * 271 + state.elapsed * 900) % (VIEW.height + 40)) - 20;
+      context.beginPath();
+      context.moveTo(x, y);
+      context.lineTo(x - 6, y + 14);
+      context.stroke();
+    }
   }
 
   function drawCarShape(car) {
@@ -493,16 +615,19 @@ export function createRenderer(canvas) {
       context.arc(lx, ly - 14, 5, 0, Math.PI * 2);
       context.fill();
     }
-    // Headlights: a cone of light ahead of the player's car or bike.
+    // Headlights: a cone of light ahead of the player's car or bike. With the
+    // headlights switched on (L) the cone reaches further and shines brighter,
+    // and it shows from dusk instead of waiting for full night.
     const car = state.cars.find((c) => c.id === state.player.inCar);
-    if (car && f > 0.25) {
-      const reach = car.vehicle === 'bike' ? 220 : 260;
+    const lightsOn = state.headlights;
+    if (car && (f > 0.25 || (lightsOn && f > 0.1))) {
+      const reach = (car.vehicle === 'bike' ? 220 : 260) * (lightsOn ? 1.4 : 1);
       const spread = 0.42;
       const fx = Math.cos(car.angle);
       const fy = Math.sin(car.angle);
       const px = -fy;
       const py = fx;
-      context.fillStyle = `rgba(255,246,176,${(0.20 * f).toFixed(3)})`;
+      context.fillStyle = `rgba(255,246,176,${(0.20 * f * (lightsOn ? 1.6 : 1)).toFixed(3)})`;
       context.beginPath();
       context.moveTo(car.x + fx * 20, car.y + fy * 20);
       context.lineTo(car.x + fx * reach + px * reach * spread, car.y + fy * reach + py * reach * spread);
@@ -614,6 +739,29 @@ export function createRenderer(canvas) {
         roundedRect(context, nbX, nbY + 6, 134 * nfrac, 8, 4);
         context.fill();
       }
+      // Fuel gauge under the nitro meter: amber while healthy, flashing red
+      // under a fifth, with the refill price when parked at the pump.
+      const fbX = VIEW.width - 150;
+      const fbY = VIEW.height - 124;
+      const lowFuel = state.fuel < FUEL.lowWarn;
+      const flash = lowFuel && Math.floor(state.elapsed * 4) % 2 === 0;
+      text('BENSIN', fbX + 67, fbY - 4, 12, lowFuel ? (flash ? '#e5534b' : PALETTE.muted) : PALETTE.muted, 'center');
+      context.fillStyle = 'rgba(20,26,40,0.8)';
+      roundedRect(context, fbX - 4, fbY + 2, 142, 16, 8);
+      context.fill();
+      context.fillStyle = 'rgba(255,255,255,0.18)';
+      roundedRect(context, fbX, fbY + 6, 134, 8, 4);
+      context.fill();
+      const ffrac = Math.max(0, Math.min(1, state.fuel));
+      context.fillStyle = lowFuel ? '#e5534b' : PALETTE.neonAmber;
+      if (ffrac > 0) {
+        roundedRect(context, fbX, fbY + 6, 134 * ffrac, 8, 4);
+        context.fill();
+      }
+      const pump = Math.hypot(state.player.x - PLACES.gasStation.x, state.player.y - PLACES.gasStation.y) < FUEL.refillRadius;
+      if (pump && state.fuel < 1) {
+        text(`Isi bensin: $${Math.round((1 - state.fuel) * FUEL.pricePerUnit)}`, VIEW.width - 82, fbY - 22, 13, PALETTE.gold, 'center');
+      }
     } else {
       // Dash readiness on foot (F): cyan when ready, grey while cooling down.
       const ready = state.dashCooldown <= 0;
@@ -652,6 +800,33 @@ export function createRenderer(canvas) {
       context.fill();
       text(state.missionLabel, VIEW.width / 2, VIEW.height - 27, 19, '#fff', 'center');
     }
+    // VIP passenger: the client's name and the running fare with its destination.
+    if (state.passenger2 && state.passenger2.phase === 'ride' && state.passenger2.dropoff) {
+      const job = state.passenger2;
+      const label = `${state.passenger2Client}  →  ${job.dropoff.place}  $${Math.round(job.fare)}`;
+      context.fillStyle = 'rgba(20,26,40,0.85)';
+      const w = Math.min(520, 40 + label.length * 9);
+      roundedRect(context, (VIEW.width - w) / 2, 54, w, 36, 10);
+      context.fill();
+      text(label, VIEW.width / 2, 79, 19, PALETTE.neonPink, 'center');
+    } else if (state.passenger2 && state.passenger2.phase === 'hail') {
+      const hint = `${state.passenger2Client} menunggu di ${state.passenger2.place} — jemput dengan mobil.`;
+      context.fillStyle = 'rgba(20,26,40,0.85)';
+      const w = Math.min(640, 40 + hint.length * 8.5);
+      roundedRect(context, (VIEW.width - w) / 2, 54, w, 34, 10);
+      context.fill();
+      text(hint, VIEW.width / 2, 78, 17, PALETTE.neonPink, 'center');
+    }
+    // Mission summary: a gold banner for a few seconds after a mission pays out.
+    if (state.summaryTimer > 0 && state.lastMission) {
+      const m = state.lastMission;
+      const line = `MISI SELESAI — ${m.title}  ·  +$${m.reward}${m.bonus > 0 ? ` + bonus $${m.bonus}` : ''}  ·  ${m.seconds} dtk`;
+      context.fillStyle = 'rgba(242,201,76,0.95)';
+      const w = Math.min(820, 40 + line.length * 9);
+      roundedRect(context, (VIEW.width - w) / 2, VIEW.height - 152, w, 36, 10);
+      context.fill();
+      text(line, VIEW.width / 2, VIEW.height - 127, 19, '#232a3d', 'center');
+    }
     // Toast, above the objective.
     if (state.toastTimer > 0) {
       context.fillStyle = 'rgba(242,201,76,0.92)';
@@ -688,7 +863,8 @@ export function createRenderer(canvas) {
     'dan jadilah legenda jalanan Kota Neon.',
     '',
     'WASD / panah: jalan & nyetir   Shift: lari / nitro di mobil   E: masuk mobil',
-    'Spasi: pukul   F: dash   H: klakson   P: jeda   M: suara',
+    'Spasi: pukul   F: dash   H: klakson (2× = panjang)   L: lampu   R: perbaiki',
+    'Bensin habis? Isi di SPBU Neon. Wanted 3? Awas roadblock di depan.',
   ];
 
   /** Paint one frame: the world through the camera, then the HUD or a panel. */
@@ -701,11 +877,14 @@ export function createRenderer(canvas) {
     drawCity(state);
     drawMarker(state);
     drawTaxi(state);
+    drawRoadblocks(state);
     drawCars(state);
+    drawDamageSmoke(state);
     drawPeds(state);
     drawPlayer(state);
     drawParticles(state);
     drawNight(state);
+    drawRain(state);
     // Dusk tint for the mission scene.
     if (state.dusk) {
       context.fillStyle = 'rgba(255,110,40,0.20)';
@@ -722,7 +901,15 @@ export function createRenderer(canvas) {
     }
     drawHud(state);
     if (screen === SCREEN_PAUSED) {
-      drawPanel('Jeda', ['Kota Neon menunggu. Polisinya juga.', ''], 'P: lanjutkan', PALETTE.neonCyan);
+      const stats = state.stats;
+      drawPanel('Jeda', [
+        'Kota Neon menunggu. Polisinya juga.',
+        '',
+        `Misi selesai: ${stats.missionsDone}  ·  Mobil dicuri: ${stats.carsStolen}  ·  Ditangkap: ${stats.timesBusted}`,
+        `Tarif selesai: ${stats.faresDone}  ·  Uang dari misi & tarif: $${stats.cashEarned}`,
+        '',
+        'L: lampu depan  ·  R: perbaiki di Bengkel Sari  ·  H 2×: klakson panjang',
+      ], 'P: lanjutkan', PALETTE.neonCyan);
     } else if (screen === SCREEN_BUSTED) {
       drawPanel('KETANGKAP!', [`Kasmu sekarang $${state.cash}.`, 'Bu Sari sudah menunggu di bengkel.'], 'Spasi / klik: bebas lagi', PALETTE.red);
     } else if (screen === SCREEN_OVER) {

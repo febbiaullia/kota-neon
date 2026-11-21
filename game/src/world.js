@@ -3,10 +3,10 @@
 // story, combat, the taxi side job and the day cycle — the city itself. step() advances one
 // fixed step and returns what happened as bit flags, so the caller can react (sound, screens,
 // saves) without the world knowing about them.
-import { BEACH, BIKE, CAR, DASH, DAY, MISSIONS, NITRO, PEDS, PLACES, PLAYER, POLICE, ROADS, TAXI, TRAFFIC, WANTED, WORLD } from './config.js';
+import { BEACH, BIKE, CAR, DASH, DAY, FUEL, MISSIONS, NITRO, PASSENGER, PEDS, PLACES, PLAYER, POLICE, REPAIR, ROADBLOCK, ROADS, TAXI, TRAFFIC, WANTED, WORLD } from './config.js';
 import { createCity, hitsBuilding, inSea, nearestRoadPoint, onPier, onRoad, onSand, ROAD_HALF } from './city.js';
-import { pick, range } from './random.js';
-import { ACTION_DASH, ACTION_ENTER, ACTION_HONK, ACTION_PUNCH } from './input.js';
+import { gauss, pick, range, sample, weightedPick } from './random.js';
+import { ACTION_DASH, ACTION_ENTER, ACTION_HONK, ACTION_HONK_LONG, ACTION_LIGHTS, ACTION_PUNCH, ACTION_REPAIR } from './input.js';
 
 export const EVENT_PICKUP = 1;
 export const EVENT_CRASH = 2;
@@ -20,6 +20,10 @@ export const EVENT_FAIL = 256;
 export const EVENT_HONK = 512;
 export const EVENT_TAXI = 1024;
 export const EVENT_DASH = 2048;
+export const EVENT_FUEL = 4096;
+export const EVENT_REPAIR = 8192;
+export const EVENT_ROADBLOCK = 16384;
+export const EVENT_PASSENGER = 32768;
 
 const TAU = Math.PI * 2;
 
@@ -75,6 +79,13 @@ export function createWorld(random) {
     timeOfDay: 0.3, nightFactor: 0,
     taxiActive: false, taxiFare: 0, taxiDropoff: null,
     taxiCooldown: TAXI.firstHailDelay, taxiHail: null,
+    // Round 5: fuel, headlights, roadblocks, the VIP passenger job, stats.
+    fuel: 1, fuelWarned: false, fuelEmptyToasted: false, headlights: false,
+    roadblocks: [], roadblockCooldown: 0, roadblockHitCooldown: 0,
+    passenger2: null, passenger2Cooldown: PASSENGER.firstDelay,
+    passenger2Client: null, passenger2StartedAt: 0,
+    stats: { carsStolen: 0, timesBusted: 0, faresDone: 0, missionsDone: 0, cashEarned: 0 },
+    lastMission: null, summaryTimer: 0, missionStartElapsed: 0, raceCheckpoint: 0,
   };
 
   function toast(text, seconds = 3) {
@@ -198,6 +209,14 @@ export function createWorld(random) {
     state.missionLabel = `${mission.title}: ${step.label}`;
     state.marker = { x: step.x, y: step.y };
     if (step.time) state.missionTimer = step.time;
+    state.missionStartElapsed = state.elapsed;
+    state.raceCheckpoint = 0;
+    if (step.type === 'race') {
+      // A race step points at its first checkpoint, not at one fixed spot.
+      const first = step.checkpoints[0];
+      state.missionLabel = `${mission.title}: ${first.label}`;
+      state.marker = { x: first.x, y: first.y };
+    }
     toast(`${mission.title} — ${mission.briefing}`, 5);
   }
 
@@ -206,7 +225,18 @@ export function createWorld(random) {
     state.missionStep += 1;
     if (state.missionStep >= mission.steps.length) {
       state.cash += mission.reward;
-      toast(`Misi selesai! +$${mission.reward}`, 4);
+      state.stats.missionsDone += 1;
+      state.stats.cashEarned += mission.reward;
+      // A fast finish on a timed mission pays a $50 speed bonus on top.
+      const seconds = Math.max(0, Math.round(state.elapsed - state.missionStartElapsed));
+      const bonus = (mission.steps.some((s) => s.time) && state.missionTimer > 20) ? 50 : 0;
+      if (bonus > 0) {
+        state.cash += bonus;
+        state.stats.cashEarned += bonus;
+      }
+      state.lastMission = { title: mission.title, reward: mission.reward, seconds, bonus };
+      state.summaryTimer = 5;
+      toast(`Misi selesai! +$${mission.reward}${bonus > 0 ? ` + bonus $${bonus}` : ''}`, 4);
       state.missionIndex += 1;
       state.passenger = false;
       if (state.missionIndex >= MISSIONS.length) {
@@ -222,6 +252,12 @@ export function createWorld(random) {
     state.missionLabel = `${mission.title}: ${step.label}`;
     state.marker = { x: step.x, y: step.y };
     if (step.time) state.missionTimer = step.time;
+    if (step.type === 'race') {
+      state.raceCheckpoint = 0;
+      const first = step.checkpoints[0];
+      state.missionLabel = `${mission.title}: ${first.label}`;
+      state.marker = { x: first.x, y: first.y };
+    }
     return events | EVENT_PICKUP;
   }
 
@@ -231,10 +267,16 @@ export function createWorld(random) {
     toast(`Misi gagal: ${mission.title} — coba lagi!`, 4);
     state.wanted = 0;
     state.missionStep = 0;
+    state.raceCheckpoint = 0;
     const step = currentStep();
     state.missionLabel = `${mission.title}: ${step.label}`;
     state.marker = { x: step.x, y: step.y };
     if (step.time) state.missionTimer = step.time;
+    if (step.type === 'race') {
+      const first = step.checkpoints[0];
+      state.missionLabel = `${mission.title}: ${first.label}`;
+      state.marker = { x: first.x, y: first.y };
+    }
     player.x = PLACES.garage.x;
     player.y = PLACES.garage.y + 90;
     player.inCar = null;
@@ -280,6 +322,11 @@ export function createWorld(random) {
     car.ai = null;
     if (!car.owned) {
       car.owned = true;
+      state.stats.carsStolen += 1;
+      // A stolen car always has at least a quarter tank in it.
+      state.fuel = Math.max(state.fuel, 0.25);
+      state.fuelWarned = state.fuel < FUEL.lowWarn;
+      state.fuelEmptyToasted = false;
       wantedUp(WANTED.steal);
       toast('Mobil dicuri! Polisi mengejarmu!', 3);
       return events | EVENT_STEAL;
@@ -383,6 +430,8 @@ export function createWorld(random) {
     // acceleration, a higher top speed — and a much smaller margin for error.
     const tune = car.vehicle === 'bike' ? BIKE : CAR;
     const halfWidth = car.vehicle === 'bike' ? BIKE.width / 2 + 2 : CAR.width / 2;
+    // No fuel, no drive: an empty tank leaves the car rolling to a stop.
+    const outOfFuel = state.fuel <= 0;
     // Nitro: Shift while accelerating forward. The meter drains while it burns,
     // locks out briefly when it runs dry, and refills while idle.
     const wantNitro = move.sprint && move.y < 0 && state.nitroCooldown <= 0 && state.nitro > 0;
@@ -399,7 +448,7 @@ export function createWorld(random) {
     }
     const accelMax = (onSandNow ? tune.accel * 0.55 : tune.accel) + (wantNitro ? NITRO.accelBonus : 0);
     const topSpeed = wantNitro ? tune.maxSpeed * NITRO.boost : tune.maxSpeed;
-    if (move.y < 0) car.speed += accelMax * dt;
+    if (move.y < 0 && !outOfFuel) car.speed += accelMax * dt;
     else if (move.y > 0) {
       if (car.speed > 20) car.speed -= tune.brake * dt;
       else car.speed -= tune.reverseAccel * dt;
@@ -669,6 +718,198 @@ export function createWorld(random) {
       if (car && car.missionCar && distance(px, py, step.x, step.y) < step.radius) {
         return advanceStep(events);
       }
+    } else if (step.type === 'race') {
+      // A checkpoint race: pass every checkpoint in order before the clock dies.
+      const checkpoint = step.checkpoints[state.raceCheckpoint];
+      if (checkpoint && distance(px, py, checkpoint.x, checkpoint.y) < checkpoint.radius) {
+        state.raceCheckpoint += 1;
+        if (state.raceCheckpoint >= step.checkpoints.length) return advanceStep(events);
+        const next = step.checkpoints[state.raceCheckpoint];
+        state.missionLabel = `${currentMission().title}: ${next.label}`;
+        state.marker = { x: next.x, y: next.y };
+        return events | EVENT_PICKUP;
+      }
+    }
+    return events;
+  }
+
+  /** Fuel: the tank drains with distance driven, and refills at the SPBU pump
+   * while the car sits by it — cash pays per unit filled. An empty tank stalls
+   * the car; a stolen car always has at least a quarter tank in it. */
+  function updateFuel(dt, events) {
+    const car = playerCar();
+    if (!car || car.wrecked) return events;
+    const driven = Math.abs(car.speed) * dt;
+    if (driven > 0) state.fuel = Math.max(0, state.fuel - driven * FUEL.drainPerMetre);
+    if (state.fuel < FUEL.lowWarn && !state.fuelWarned) {
+      state.fuelWarned = true;
+      toast('Bensin menipis! Cari SPBU Neon.', 3);
+      events |= EVENT_FUEL;
+    }
+    if (state.fuel <= 0 && !state.fuelEmptyToasted) {
+      state.fuelEmptyToasted = true;
+      toast('Bensin habis! Mobil mogok — curi mobil lain.', 4);
+      events |= EVENT_FUEL;
+    }
+    const nearPump = distance(car.x, car.y, PLACES.gasStation.x, PLACES.gasStation.y) < FUEL.refillRadius;
+    if (nearPump && Math.abs(car.speed) < 20 && state.fuel < 1 && state.cash > 0) {
+      const want = Math.min(FUEL.refillRate * dt, 1 - state.fuel);
+      const fill = Math.min(want, state.cash / FUEL.pricePerUnit);
+      if (fill > 0) {
+        state.fuel += fill;
+        state.cash -= fill * FUEL.pricePerUnit;
+        if (state.fuel >= 1) {
+          state.fuelWarned = false;
+          state.fuelEmptyToasted = false;
+          toast('Tangki penuh! Siap jalan lagi.', 3);
+        }
+      }
+    }
+    return events;
+  }
+
+  /** Repair (R): only at Bengkel Sari, only the car you are driving, and only
+   * if you can pay the bill — per missing HP, with a minimum charge. */
+  function repairCar(events) {
+    const car = playerCar();
+    if (!car) {
+      toast('Masuk mobil dulu untuk memperbaiki.', 3);
+      return events;
+    }
+    if (distance(player.x, player.y, PLACES.garage.x, PLACES.garage.y) > REPAIR.radius) {
+      toast('Perbaiki mobil hanya di Bengkel Sari.', 3);
+      return events;
+    }
+    const maxHp = car.vehicle === 'bike' ? BIKE.hp : CAR.hp;
+    if (car.hp >= maxHp) {
+      toast('Mobilmu sudah prima.', 2);
+      return events;
+    }
+    const cost = Math.max(REPAIR.minCost, Math.ceil((maxHp - car.hp) * REPAIR.pricePerHp));
+    if (state.cash < cost) {
+      toast(`Uang tidak cukup untuk bengkel ($${cost}).`, 3);
+      return events;
+    }
+    state.cash -= cost;
+    car.hp = maxHp;
+    sparks(car.x, car.y, 12, '#58d68d');
+    toast(`Mobil diperbaiki! -$${cost}`, 3);
+    return events | EVENT_REPAIR;
+  }
+
+  /** Headlights (L): a toggle, so the player can light the road at dusk even
+   * before full night — the renderer makes the cone longer and brighter. */
+  function toggleHeadlights(events) {
+    state.headlights = !state.headlights;
+    toast(state.headlights ? 'Lampu depan menyala.' : 'Lampu depan mati.', 2);
+    return events;
+  }
+
+  /** Police roadblocks: once wanted hits 3, the police seal the road ahead of
+   * the player with cones. Ramming a cone damages the car and slows it hard;
+   * the block clears as soon as the heat drops below 3. */
+  function updateRoadblocks(dt, events) {
+    if (state.roadblockHitCooldown > 0) state.roadblockHitCooldown = Math.max(0, state.roadblockHitCooldown - dt);
+    if (state.roadblockCooldown > 0) state.roadblockCooldown -= dt;
+    if (state.wanted < ROADBLOCK.minWanted) {
+      if (state.roadblocks.length > 0) state.roadblocks.length = 0;
+      return events;
+    }
+    if (state.roadblocks.length < ROADBLOCK.maxActive && state.roadblockCooldown <= 0) {
+      const aheadX = player.x + Math.cos(player.angle) * ROADBLOCK.aheadDistance;
+      const aheadY = player.y + Math.sin(player.angle) * ROADBLOCK.aheadDistance;
+      const point = nearestRoadPoint(aheadX, aheadY);
+      const bx = point.axis === 'v' ? point.road : point.x;
+      const by = point.axis === 'v' ? point.y : point.road;
+      const cones = [];
+      for (let i = 0; i < ROADBLOCK.coneCount; i += 1) {
+        const across = -ROAD_HALF + 20 + (i * (ROAD_HALF * 2 - 40)) / (ROADBLOCK.coneCount - 1);
+        const jitter = gauss(random) * 6;
+        cones.push(point.axis === 'v'
+          ? { x: bx + across + jitter, y: by }
+          : { x: bx, y: by + across + jitter });
+      }
+      state.roadblocks.push({ x: bx, y: by, axis: point.axis, cones });
+      state.roadblockCooldown = ROADBLOCK.spawnCooldown;
+      toast('Polisi memasang roadblock di depan!', 3);
+      events |= EVENT_ROADBLOCK;
+    }
+    const car = playerCar();
+    if (car && !car.wrecked && state.roadblockHitCooldown <= 0) {
+      for (const block of state.roadblocks) {
+        for (const cone of block.cones) {
+          if (distance(car.x, car.y, cone.x, cone.y) < ROADBLOCK.hitRadius) {
+            car.hp -= ROADBLOCK.hitDamage;
+            car.speed *= 0.4;
+            sparks(cone.x, cone.y, 8, '#ffb347');
+            state.roadblockHitCooldown = ROADBLOCK.hitCooldown;
+            toast('Kamu menabrak roadblock!', 3);
+            events |= EVENT_ROADBLOCK;
+            if (car.hp <= 0) {
+              car.wrecked = true;
+              toast('Mobilmu rusak parah! Cari mobil lain.', 4);
+            }
+            return events;
+          }
+        }
+      }
+    }
+    return events;
+  }
+
+  /** The VIP passenger job, a second side job beside the taxi: a named client
+   * waits at the airport or the stadium, pays a base fare plus per-metre, and
+   * tips extra when the drop-off beats the par time. Quitting the car mid-ride
+   * loses the client and the fare. */
+  function updatePassenger2(dt, events) {
+    if (state.passenger2Cooldown > 0) state.passenger2Cooldown -= dt;
+    const inCar = player.inCar !== null;
+    if (!state.passenger2 && state.passenger2Cooldown <= 0 && inCar) {
+      const spots = [PLACES.airport, PLACES.stadium];
+      for (let tries = 0; tries < 8; tries += 1) {
+        const spot = pick(random, spots);
+        if (distance(player.x, player.y, spot.x, spot.y) > 500) {
+          state.passenger2Client = sample(random, PASSENGER.clients, 1)[0];
+          state.passenger2 = { x: spot.x, y: spot.y, place: spot.name, phase: 'hail' };
+          break;
+        }
+      }
+    }
+    const job = state.passenger2;
+    if (job && job.phase === 'hail' && inCar && distance(player.x, player.y, job.x, job.y) < PASSENGER.waitRadius) {
+      // The destination is drawn from the other VIP spots, weighted toward the
+      // clock tower, so a fare never ends where it began.
+      const spots = [
+        [PLACES.airport, 1], [PLACES.stadium, 1], [PLACES.tower, 2], [PLACES.pier, 1],
+      ].filter(([p]) => p.name !== job.place);
+      const drop = weightedPick(random, spots);
+      job.phase = 'ride';
+      job.dropoff = { x: drop.x, y: drop.y, place: drop.name };
+      job.fare = PASSENGER.baseFare;
+      job.startedAt = state.elapsed;
+      toast(`${state.passenger2Client} naik! Antar ke ${drop.name} — cepat, ada tip.`, 3);
+      return events | EVENT_PASSENGER;
+    }
+    if (job && job.phase === 'ride') {
+      if (!inCar) {
+        state.passenger2 = null;
+        state.passenger2Cooldown = PASSENGER.cooldown;
+        toast(`${state.passenger2Client} turun — tarif VIP hangus.`, 3);
+        return events;
+      }
+      job.fare += Math.abs(state.speed) * dt * PASSENGER.perMetre;
+      if (distance(player.x, player.y, job.dropoff.x, job.dropoff.y) < PASSENGER.dropoffRadius) {
+        const rideSeconds = state.elapsed - job.startedAt;
+        const tip = Math.max(0, Math.round((PASSENGER.parTime - rideSeconds) * PASSENGER.tipPerSecond));
+        const paid = Math.round(job.fare) + tip;
+        state.cash += paid;
+        state.stats.faresDone += 1;
+        state.stats.cashEarned += paid;
+        toast(`VIP dibayar! +$${paid}${tip > 0 ? ` (termasuk tip $${tip})` : ''}`, 4);
+        state.passenger2 = null;
+        state.passenger2Cooldown = PASSENGER.cooldown;
+        return events | EVENT_PASSENGER;
+      }
     }
     return events;
   }
@@ -750,6 +991,8 @@ export function createWorld(random) {
       if (drop && distance(player.x, player.y, drop.x, drop.y) < TAXI.dropoffRadius) {
         const paid = Math.round(state.taxiFare);
         state.cash += paid;
+        state.stats.faresDone += 1;
+        state.stats.cashEarned += paid;
         toast(`Argo dibayar! +$${paid}`, 4);
         state.taxiActive = false;
         state.taxiDropoff = null;
@@ -826,6 +1069,22 @@ export function createWorld(random) {
     state.taxiDropoff = null;
     state.taxiCooldown = TAXI.firstHailDelay;
     state.taxiHail = null;
+    state.fuel = 1;
+    state.fuelWarned = false;
+    state.fuelEmptyToasted = false;
+    state.headlights = false;
+    state.roadblocks.length = 0;
+    state.roadblockCooldown = 0;
+    state.roadblockHitCooldown = 0;
+    state.passenger2 = null;
+    state.passenger2Cooldown = PASSENGER.firstDelay;
+    state.passenger2Client = null;
+    state.passenger2StartedAt = 0;
+    state.stats = { carsStolen: 0, timesBusted: 0, faresDone: 0, missionsDone: 0, cashEarned: 0 };
+    state.lastMission = null;
+    state.summaryTimer = 0;
+    state.missionStartElapsed = 0;
+    state.raceCheckpoint = 0;
     for (let i = 0; i < TRAFFIC.count; i += 1) spawnTrafficCar(PLACES.garage.x, PLACES.garage.y);
     for (let i = 0; i < 6; i += 1) spawnParkedCar();
     for (let i = 0; i < PEDS.count; i += 1) spawnPed();
@@ -846,6 +1105,7 @@ export function createWorld(random) {
     let events = 0;
     state.elapsed += dt;
     if (state.toastTimer > 0) state.toastTimer -= dt;
+    if (state.summaryTimer > 0) state.summaryTimer -= dt;
     if (player.hp < PLAYER.hp && state.wanted === 0) player.hp = Math.min(PLAYER.hp, player.hp + 3 * dt);
 
     if (actions & ACTION_ENTER) {
@@ -853,6 +1113,8 @@ export function createWorld(random) {
       else events = enterCar(events);
     }
     if (actions & ACTION_PUNCH) events = punch(events);
+    if (actions & ACTION_REPAIR) events = repairCar(events);
+    if (actions & ACTION_LIGHTS) events = toggleHeadlights(events);
     if ((actions & ACTION_DASH) && player.inCar === null && state.dashCooldown <= 0 && state.dashTimer <= 0) {
       // Dash: burst in the direction of movement, or the facing direction if still.
       const len = Math.hypot(move.x, move.y);
@@ -868,7 +1130,8 @@ export function createWorld(random) {
       }
       events |= EVENT_DASH;
     }
-    if (actions & ACTION_HONK && audio) audio.honk();
+    if (actions & ACTION_HONK_LONG && audio) audio.honkLong();
+    else if (actions & ACTION_HONK && audio) audio.honk();
 
     if (player.inCar !== null) updatePlayerCar(dt, move);
     else updatePlayerOnFoot(dt, move);
@@ -878,6 +1141,9 @@ export function createWorld(random) {
     events = updatePolice(dt, events);
     events = updateMissions(dt, events);
     events = updateTaxi(dt, events);
+    events = updateFuel(dt, events);
+    events = updateRoadblocks(dt, events);
+    events = updatePassenger2(dt, events);
     updateWanted(dt);
     updateTime(dt);
     updateTrafficDensity();
@@ -908,6 +1174,10 @@ export function createWorld(random) {
     state.taxiDropoff = null;
     state.taxiHail = null;
     state.taxiCooldown = TAXI.cooldownAfterQuit;
+    state.stats.timesBusted += 1;
+    state.roadblocks.length = 0;
+    state.passenger2 = null;
+    state.passenger2Cooldown = PASSENGER.cooldown;
     player.hp = PLAYER.hp;
     player.inCar = null;
     player.x = PLACES.garage.x;
@@ -931,6 +1201,8 @@ export function createWorld(random) {
       storyDone: state.storyDone,
       x: player.x,
       y: player.y,
+      fuel: state.fuel,
+      stats: { ...state.stats },
     };
   }
 
@@ -939,6 +1211,8 @@ export function createWorld(random) {
     state.cash = data.cash || 0;
     state.missionIndex = data.missionIndex || 0;
     state.storyDone = !!data.storyDone;
+    if (typeof data.fuel === 'number') state.fuel = Math.max(0, Math.min(1, data.fuel));
+    if (data.stats) state.stats = { ...state.stats, ...data.stats };
     if (typeof data.x === 'number' && typeof data.y === 'number') {
       player.x = clamp(data.x, 20, WORLD.width - 20);
       player.y = clamp(data.y, 20, WORLD.height - 20);

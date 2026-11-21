@@ -9,6 +9,9 @@ const START_SECONDS = 5;
 const DRIVE_SECONDS = 24;
 const CHASE_SECONDS = 18;
 const MISSION_SECONDS = 8;
+const FUEL_SECONDS = 6;
+const ROADBLOCK_SECONDS = 10;
+const PASSENGER_SECONDS = 8;
 
 /** Waypoints along the roads for the driving autopilot. Each pair shares one road, so the
  * straight line between them follows asphalt, never a building. The first point is the
@@ -79,12 +82,101 @@ function putPlayerInStarterCar(world) {
 }
 
 /**
- * Set `world` to the named scene (start, drive, chase, mission, night; any other name
- * is start) and return the screen to draw over it and the best cash to show.
+ * Set `world` to the named scene (start, drive, chase, mission, night, fuel,
+ * roadblock, passenger; any other name is start) and return the screen to draw
+ * over it and the best cash to show.
  */
 export function stageShot(name, world) {
   world.reset();
   const state = world.state;
+  if (name === 'fuel') {
+    // Almost dry at the pump: the gauge flashes red and the refill price shows.
+    // The car waits just outside the pump radius, so the tank stays low for
+    // the frame instead of filling during the staging run.
+    putPlayerInStarterCar(world);
+    const fuelCar = world.playerCar();
+    if (fuelCar) {
+      fuelCar.x = PLACES.gasStation.x + 200;
+      fuelCar.y = PLACES.gasStation.y;
+      fuelCar.angle = Math.PI;
+      fuelCar.speed = 0;
+      state.player.x = fuelCar.x;
+      state.player.y = fuelCar.y;
+      state.player.angle = Math.PI;
+    }
+    state.fuel = 0.08;
+    state.cash = 300;
+    state.camera.x = Math.max(0, Math.min(3600 - 1280, state.player.x - 640));
+    state.camera.y = Math.max(0, Math.min(2600 - 720, state.player.y - 360));
+    for (let i = 0; i < FUEL_SECONDS / STEP; i += 1) {
+      world.step(STEP, { x: 0, y: 0, sprint: false }, 0, null);
+    }
+    state.toast = 'Bensin hampir habis — isi di SPBU Neon.';
+    state.toastTimer = 30;
+    return { screen: SCREEN_PLAY, best: 1250 };
+  }
+  if (name === 'roadblock') {
+    // Wanted 3 on the avenue: the police seal the road ahead with cones while
+    // the chase closes in — the frame catches the block before the ram.
+    putPlayerInStarterCar(world);
+    const blockCar = world.playerCar();
+    if (blockCar) {
+      blockCar.x = 1500;
+      blockCar.y = 800;
+      blockCar.angle = -Math.PI / 2;
+      blockCar.speed = 0;
+      state.player.x = 1500;
+      state.player.y = 800;
+      state.player.angle = -Math.PI / 2;
+    }
+    state.wanted = 3;
+    state.roadblockCooldown = 0;
+    let roadRoute = 0;
+    const roadStuck = { still: 0, reversing: 0 };
+    for (let i = 0; i < ROADBLOCK_SECONDS / STEP; i += 1) {
+      const drive = driveAutopilot(world, roadRoute, roadStuck, false);
+      roadRoute = drive.routeIndex;
+      world.step(STEP, drive.move, 0, null);
+    }
+    state.toast = 'Polisi memasang roadblock di depan!';
+    state.toastTimer = 30;
+    const roadOver = world.state.player.hp <= 0;
+    return { screen: roadOver ? SCREEN_OVER : SCREEN_PLAY, best: 1250 };
+  }
+  if (name === 'passenger') {
+    // A VIP client boards at the airport: the pink fare line shows the client,
+    // the destination and the running fare while the car rolls to the stadium.
+    putPlayerInStarterCar(world);
+    state.passenger2Cooldown = 0;
+    let waited = 0;
+    while (!state.passenger2 && waited < 5 / STEP) {
+      world.step(STEP, { x: 0, y: 0, sprint: false }, 0, null);
+      waited += 1;
+    }
+    if (state.passenger2) {
+      const hail = state.passenger2;
+      const pCar = world.playerCar();
+      if (pCar) {
+        pCar.x = hail.x + 20;
+        pCar.y = hail.y;
+        pCar.angle = 0;
+        pCar.speed = 0;
+        state.player.x = pCar.x;
+        state.player.y = pCar.y;
+        state.player.angle = 0;
+      }
+      world.step(STEP, { x: 0, y: 0, sprint: false }, 0, null);
+    }
+    let passRoute = 0;
+    const passStuck = { still: 0, reversing: 0 };
+    for (let i = 0; i < PASSENGER_SECONDS / STEP; i += 1) {
+      const drive = driveAutopilot(world, passRoute, passStuck, false);
+      passRoute = drive.routeIndex;
+      world.step(STEP, drive.move, 0, null);
+    }
+    const passOver = world.state.player.hp <= 0;
+    return { screen: passOver ? SCREEN_OVER : SCREEN_PLAY, best: 1250 };
+  }
   if (name !== 'drive' && name !== 'chase' && name !== 'mission' && name !== 'night') {
     for (let i = 0; i < START_SECONDS / STEP; i += 1) {
       world.step(STEP, { x: 0, y: 0, sprint: false }, 0, null);

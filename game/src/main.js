@@ -7,8 +7,8 @@
 // ?seed=N fixes the city and the traffic. ?shot=start|drive|chase|mission (with &seed=N)
 // stages that scene instead of running the loop, paints it twice and sets window.__shotReady.
 import { BEST_KEY, BIKE, CAR, NITRO, PLAYER, SAVE_KEY, STEP } from './config.js';
-import { createRandom } from './random.js';
-import { createWorld, EVENT_BUSTED, EVENT_CRASH, EVENT_DASH, EVENT_FAIL, EVENT_HIT, EVENT_MISSION, EVENT_PICKUP, EVENT_PUNCH, EVENT_STEAL, EVENT_STORY, EVENT_TAXI } from './world.js';
+import { createRandom, seedFromString } from './random.js';
+import { createWorld, EVENT_BUSTED, EVENT_CRASH, EVENT_DASH, EVENT_FAIL, EVENT_FUEL, EVENT_HIT, EVENT_MISSION, EVENT_PASSENGER, EVENT_PICKUP, EVENT_PUNCH, EVENT_REPAIR, EVENT_ROADBLOCK, EVENT_STEAL, EVENT_STORY, EVENT_TAXI } from './world.js';
 import { createAudio } from './audio.js';
 import { ACTION_CONFIRM, ACTION_ENTER, ACTION_MUTE, ACTION_PAUSE, ACTION_PUNCH, createInput } from './input.js';
 import { createRenderer, SCREEN_BUSTED, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
@@ -20,7 +20,11 @@ const MAX_FRAME = 0.25;
 const params = new URLSearchParams(window.location.search);
 const shot = params.get('shot');
 const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
-const seed = Number.isInteger(seedParam) ? seedParam : Math.floor(Math.random() * 4294967296);
+// A named seed (?seed=kota-neon) always builds the same city, so a scene can be
+// shared by name instead of by number; a numeric seed still works as before.
+const seed = Number.isInteger(seedParam)
+  ? seedParam
+  : (params.get('seed') ? seedFromString(params.get('seed')) : Math.floor(Math.random() * 4294967296));
 
 const canvas = document.getElementById('game');
 const status = document.getElementById('status');
@@ -100,6 +104,18 @@ function runGame() {
     get best() {
       return best;
     },
+    get stats() {
+      return world.state.stats;
+    },
+    get fuel() {
+      return world.state.fuel;
+    },
+    get roadblocks() {
+      return world.state.roadblocks;
+    },
+    get passenger2() {
+      return world.state.passenger2;
+    },
     version: 'kota-neon/1',
   };
 
@@ -167,6 +183,11 @@ function runGame() {
         best = world.state.cash;
         saveBest(best);
       }
+      // Read the summary aloud too, so the player hears what the banner shows.
+      const done = world.state.lastMission;
+      if (done) {
+        announce(`Misi selesai: ${done.title} +$${done.reward}${done.bonus > 0 ? ` + bonus $${done.bonus}` : ''} dalam ${done.seconds} detik.`);
+      }
     } else if (events & EVENT_PICKUP) audio.blip();
     if (events & EVENT_CRASH) audio.crash(200);
     if (events & EVENT_HIT) announce(`Kamu kena! HP ${Math.max(0, Math.round(world.state.player.hp))}.`);
@@ -174,6 +195,10 @@ function runGame() {
     if (events & EVENT_PUNCH) audio.punch();
     if (events & EVENT_TAXI) audio.taxi();
     if (events & EVENT_DASH) audio.dash();
+    if (events & EVENT_FUEL) audio.fuelWarn();
+    if (events & EVENT_REPAIR) audio.repair();
+    if (events & EVENT_PASSENGER) audio.passenger();
+    if (events & EVENT_ROADBLOCK) audio.roadblockSiren();
     if (events & EVENT_FAIL) announce('Misi gagal — coba lagi dari bengkel.');
   }
 
@@ -208,10 +233,14 @@ function runGame() {
 
   function stepWorld(dt, move, actions) {
     const wasNitro = world.state.nitroActive;
+    const wasFuel = world.state.fuel;
     const events = world.step(dt, move, actions, audio);
     handleEvents(events);
     // A whoosh the first frame the nitro catches, not every frame it burns.
     if (world.state.nitroActive && !wasNitro) audio.nitro();
+    // The first frame the tank runs dry, say it out loud — the driver may have
+    // missed the flashing gauge while outrunning the police.
+    if (wasFuel > 0 && world.state.fuel <= 0) announce('Bensin habis! Mobil mogok — curi mobil lain.');
     // The engine note follows the vehicle the player is actually in: a bike's top
     // speed is higher than a car's, so its engine should climb higher too.
     const playerVehicle = world.playerCar();

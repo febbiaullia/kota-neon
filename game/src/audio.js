@@ -137,6 +137,40 @@ export function createAudio() {
       tone(233, 0.18, 'square', 0.2);
       tone(294, 0.18, 'square', 0.15);
     },
+    /** The long honk: three quick blasts for a double-tap on H — the "get out of
+     * the way" horn, louder than a single tap. */
+    honkLong() {
+      for (let i = 0; i < 3; i += 1) {
+        tone(233, 0.12, 'square', 0.22, i * 0.16);
+        tone(294, 0.12, 'square', 0.18, i * 0.16);
+      }
+    },
+    /** The fuel warning: two short high beeps when the tank drops under a fifth,
+     * so the driver hears it before the car stalls. */
+    fuelWarn() {
+      tone(660, 0.09, 'square', 0.2);
+      tone(660, 0.09, 'square', 0.2, 0.14);
+    },
+    /** The repair clink: a rising three-note wrench jingle plus a metallic clink
+     * when the garage finishes the job. */
+    repair() {
+      const notes = [392, 523, 659];
+      notes.forEach((freq, i) => tone(freq, 0.16, 'triangle', 0.25, i * 0.1));
+      noise(0.06, 0.2, 3000);
+    },
+    /** The VIP passenger chime: brighter and higher than the taxi ding, three
+     * notes, for a fare that pays like a mission. */
+    passenger() {
+      const notes = [784, 988, 1175];
+      notes.forEach((freq, i) => tone(freq, 0.18, 'triangle', 0.25, i * 0.09));
+    },
+    /** The roadblock siren: four fast alternating tones when the police seal a
+     * road ahead — shorter and sharper than the cruising siren. */
+    roadblockSiren() {
+      for (let i = 0; i < 4; i += 1) {
+        tone(i % 2 === 0 ? 880 : 660, 0.09, 'sine', 0.2, i * 0.11);
+      }
+    },
     /** The taxi chime: a bright two-note ding when a passenger boards or pays. */
     taxi() {
       tone(660, 0.12, 'triangle', 0.25);

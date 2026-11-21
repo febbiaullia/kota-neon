@@ -57,3 +57,36 @@ export function weightedPick(random, entries) {
   }
   return entries[entries.length - 1][0];
 }
+
+/** n distinct elements from an array, in random order (a partial Fisher-Yates).
+ * The VIP job draws one client name this way, so the same client never books
+ * twice in a row; roadblocks draw their cone jitter from the same idea. */
+export function sample(random, array, n) {
+  const out = array.slice();
+  const take = Math.min(n, out.length);
+  for (let i = 0; i < take; i += 1) {
+    const j = i + Math.floor(random() * (out.length - i));
+    const tmp = out[i];
+    out[i] = out[j];
+    out[j] = tmp;
+  }
+  return out.slice(0, take);
+}
+
+/** An approximately normal value (mean 0, spread ~1): the sum of three uniforms,
+ * centred. Used for small organic jitter — cone placement, fare variation — where
+ * a flat uniform would look too even. */
+export function gauss(random) {
+  return (random() + random() + random() - 1.5) * 2;
+}
+
+/** A seed from any string, so a named seed (?seed=kota-neon) always builds the
+ * same city: a tiny FNV-1a hash, folded into the mulberry32 range. */
+export function seedFromString(text) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
