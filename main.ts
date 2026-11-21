@@ -49,8 +49,14 @@ dossier.features = [
   'motorcycle',
   'taxi-side-job',
   'day-night-cycle',
-  'ten-missions',
-  'new-places-pasar-neon-terminal-kota',
+  'twelve-missions',
+  'mission-checkpoint-race',
+  'fuel-system',
+  'repair-shop',
+  'police-roadblocks',
+  'vip-passenger-job',
+  'headlights',
+  'new-places-bandara-stadion-spbu',
 ];
 writeFileSync(dossierPath, JSON.stringify(dossier, null, 2));
 
